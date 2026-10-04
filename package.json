@@ -1,0 +1,17 @@
+{
+  "name": "syskode-business-deck",
+  "private": true,
+  "version": "2.2.2",
+  "scripts": {
+    "install:all": "npm install && npm install --prefix server && npm install --prefix client",
+    "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
+    "build": "npm run build --prefix client",
+    "start": "npm run start --prefix server",
+    "legacy:export": "python3 server/scripts/export_legacy.py",
+    "legacy:import": "node --env-file=server/.env server/scripts/import-legacy-json.js",
+    "legacy:validate": "node --env-file=server/.env server/scripts/validate-migration.js"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
+  }
+}
