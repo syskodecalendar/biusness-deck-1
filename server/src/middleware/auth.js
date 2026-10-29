@@ -13,12 +13,13 @@ export async function requireAuth(req, res, next) {
       })
     }
 
+    // Validate Supabase access token
     const {
       data: { user },
-      error
+      error: authError
     } = await admin.auth.getUser(token)
 
-    if (error || !user) {
+    if (authError || !user) {
       return res.status(401).json({
         error: 'Invalid or expired Supabase session'
       })
@@ -27,61 +28,33 @@ export async function requireAuth(req, res, next) {
     let profile = null
     let profileError = null
 
-    // Main lookup:
-    // Supabase auth.users.id -> profiles.user_id
+    // Correct relationship:
+    // auth.users.id = profiles.id
     const joined = await admin
       .from('profiles')
       .select('*,access_roles(*)')
-      .eq('user_id', user.id)
+      .eq('id', user.id)
       .maybeSingle()
 
     profile = joined.data
     profileError = joined.error
 
-    // Backward compatibility if access_roles migration
-    // has not yet been applied.
+    // Fallback in case the access_roles relationship
+    // is unavailable or migration is incomplete
     if (
       profileError &&
-      /access_roles|relationship|column/i.test(profileError.message || '')
+      /access_roles|relationship|column/i.test(
+        profileError.message || ''
+      )
     ) {
       const fallback = await admin
         .from('profiles')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('id', user.id)
         .maybeSingle()
 
       profile = fallback.data
       profileError = fallback.error
-    }
-
-    // Optional compatibility with very old installations
-    // where profiles.id may have been the Auth user id.
-    if (!profile && !profileError) {
-      const legacy = await admin
-        .from('profiles')
-        .select('*,access_roles(*)')
-        .eq('id', user.id)
-        .maybeSingle()
-
-      profile = legacy.data
-
-      if (
-        legacy.error &&
-        /access_roles|relationship|column/i.test(
-          legacy.error.message || ''
-        )
-      ) {
-        const legacyFallback = await admin
-          .from('profiles')
-          .select('*')
-          .eq('id', user.id)
-          .maybeSingle()
-
-        profile = legacyFallback.data
-        profileError = legacyFallback.error
-      } else {
-        profileError = legacy.error
-      }
     }
 
     if (profileError) {
@@ -90,9 +63,9 @@ export async function requireAuth(req, res, next) {
 
     req.user = user
 
+    // If no profile exists, keep safe viewer fallback
     req.profile = profile || {
       id: user.id,
-      user_id: user.id,
       role: 'viewer',
       status: 'active',
       data_scope: 'all'
@@ -100,8 +73,8 @@ export async function requireAuth(req, res, next) {
 
     req.accessRole = profile?.access_roles || null
 
-    // Your DB may contain Active / Inactive,
-    // so normalize the value before checking.
+    // Normalize status because database values may use
+    // Active / Inactive or lowercase equivalents
     if (
       String(req.profile.status || '')
         .toLowerCase() === 'inactive'
@@ -117,24 +90,35 @@ export async function requireAuth(req, res, next) {
   }
 }
 
-export const allow = (...roles) => (req, res, next) => (
-  roles.includes(req.profile?.role)
-    ? next()
-    : res.status(403).json({
-        error: 'Insufficient permission'
-      })
-)
-
-export const permit = (resource, action = 'view') => (
+export const allow = (...roles) => (
   req,
   res,
   next
+) => {
+  if (roles.includes(req.profile?.role)) {
+    return next()
+  }
+
+  return res.status(403).json({
+    error: 'Insufficient permission'
+  })
+}
+
+export const permit = (
+  resource,
+  action = 'view'
 ) => (
-  can(req, resource, action)
-    ? next()
-    : res.status(403).json({
-        error: `You do not have permission to ${action} ${resource.replaceAll('_', ' ')}.`
-      })
-)
+  req,
+  res,
+  next
+) => {
+  if (can(req, resource, action)) {
+    return next()
+  }
+
+  return res.status(403).json({
+    error: `You do not have permission to ${action} ${resource.replaceAll('_', ' ')}.`
+  })
+}
 
 export { publicAccess }
