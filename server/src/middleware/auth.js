@@ -27,19 +27,15 @@ export async function requireAuth(req, res, next) {
     let profile = null
     let profileError = null
 
-    // Main lookup:
-    // Supabase auth.users.id -> profiles.user_id
     const joined = await admin
       .from('profiles')
       .select('*,access_roles(*)')
-      .eq('user_id', user.id)
+      .eq('id', user.id)
       .maybeSingle()
 
     profile = joined.data
     profileError = joined.error
 
-    // Backward compatibility if access_roles migration
-    // has not yet been applied.
     if (
       profileError &&
       /access_roles|relationship|column/i.test(profileError.message || '')
@@ -47,41 +43,11 @@ export async function requireAuth(req, res, next) {
       const fallback = await admin
         .from('profiles')
         .select('*')
-        .eq('user_id', user.id)
+        .eq('id', user.id)
         .maybeSingle()
 
       profile = fallback.data
       profileError = fallback.error
-    }
-
-    // Optional compatibility with very old installations
-    // where profiles.id may have been the Auth user id.
-    if (!profile && !profileError) {
-      const legacy = await admin
-        .from('profiles')
-        .select('*,access_roles(*)')
-        .eq('id', user.id)
-        .maybeSingle()
-
-      profile = legacy.data
-
-      if (
-        legacy.error &&
-        /access_roles|relationship|column/i.test(
-          legacy.error.message || ''
-        )
-      ) {
-        const legacyFallback = await admin
-          .from('profiles')
-          .select('*')
-          .eq('id', user.id)
-          .maybeSingle()
-
-        profile = legacyFallback.data
-        profileError = legacyFallback.error
-      } else {
-        profileError = legacy.error
-      }
     }
 
     if (profileError) {
@@ -92,7 +58,6 @@ export async function requireAuth(req, res, next) {
 
     req.profile = profile || {
       id: user.id,
-      user_id: user.id,
       role: 'viewer',
       status: 'active',
       data_scope: 'all'
@@ -100,11 +65,8 @@ export async function requireAuth(req, res, next) {
 
     req.accessRole = profile?.access_roles || null
 
-    // Your DB may contain Active / Inactive,
-    // so normalize the value before checking.
     if (
-      String(req.profile.status || '')
-        .toLowerCase() === 'inactive'
+      String(req.profile.status || '').toLowerCase() === 'inactive'
     ) {
       return res.status(403).json({
         error: 'User account is inactive'
