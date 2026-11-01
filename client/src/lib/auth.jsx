@@ -44,11 +44,15 @@ export function AuthProvider({ children }) {
     return () => { mounted = false; subscription.unsubscribe() }
   }, [])
 
-  const signIn = async (email, password) => {
-    const result = await supabase.auth.signInWithPassword({ email, password })
-    if (result.data?.session) { setSession(result.data.session); await loadProfile(result.data.session) }
-    return result
+ const signIn = async (email, password) => {
+  const result = await supabase.auth.signInWithPassword({ email, password })
+
+  if (result.data?.session) {
+    setSession(result.data.session)
   }
+
+  return result
+}
   const signOut = async () => { const result = await supabase.auth.signOut(); setSession(null); setProfile(null); setAccess(null); return result }
   const refreshProfile = () => loadProfile(session)
   const can = (resource, action = 'view') => access?.permissions?.[resource]?.[action] === true || access?.role?.code === 'super_admin'
