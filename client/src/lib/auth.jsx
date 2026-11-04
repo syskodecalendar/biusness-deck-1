@@ -32,12 +32,12 @@ export function AuthProvider({ children }) {
 
     const token = currentSession.access_token
 
-    // Already loaded this exact session.
+    // Already successfully loaded this exact session.
     if (!force && loadedTokenRef.current === token) {
-      return null
+      return profile
     }
 
-    // A profile request is already running.
+    // Prevent multiple /users/me requests at the same time.
     if (profileRequestRef.current) {
       return profileRequestRef.current
     }
@@ -49,14 +49,37 @@ export function AuthProvider({ children }) {
         setProfile(data.profile || null)
         setAccess(data.access || null)
 
+        // Mark this token as successfully loaded only after
+        // the API request has completed successfully.
         loadedTokenRef.current = token
 
         return data.profile || null
       } catch (error) {
         console.error('Failed to load user profile:', error)
 
-        setProfile(null)
-        setAccess(null)
+        const status = error?.response?.status
+
+        /*
+         * IMPORTANT:
+         *
+         * Do NOT clear an already loaded profile because of:
+         * - Network Error
+         * - ERR_CONNECTION_RESET
+         * - CORS/LiteSpeed failure
+         * - timeout
+         * - 5xx server error
+         *
+         * Otherwise a temporary hosting/network failure causes
+         * Super Admin to suddenly appear as Viewer.
+         *
+         * Only clear profile/access when the server explicitly
+         * tells us that authentication is invalid.
+         */
+        if (status === 401 || status === 403) {
+          setProfile(null)
+          setAccess(null)
+          loadedTokenRef.current = null
+        }
 
         return null
       } finally {
@@ -73,20 +96,24 @@ export function AuthProvider({ children }) {
     let mounted = true
 
     const initialise = async () => {
-      const { data } = await supabase.auth.getSession()
+      try {
+        const { data } = await supabase.auth.getSession()
 
-      if (!mounted) return
+        if (!mounted) return
 
-      const nextSession = data.session || null
+        const nextSession = data.session || null
 
-      setSession(nextSession)
+        setSession(nextSession)
 
-      if (nextSession) {
-        await loadProfile(nextSession)
-      }
-
-      if (mounted) {
-        setLoading(false)
+        if (nextSession) {
+          await loadProfile(nextSession)
+        }
+      } catch (error) {
+        console.error('Failed to initialise authentication:', error)
+      } finally {
+        if (mounted) {
+          setLoading(false)
+        }
       }
     }
 
@@ -100,13 +127,21 @@ export function AuthProvider({ children }) {
       setSession(nextSession || null)
 
       if (nextSession) {
+        /*
+         * Supabase may fire events such as TOKEN_REFRESHED.
+         * loadProfile() already prevents duplicate simultaneous
+         * requests and avoids reloading an already loaded token.
+         */
         setTimeout(() => {
           if (mounted) {
             void loadProfile(nextSession)
           }
         }, 0)
       } else {
+        // Genuine logout/session removal.
         loadedTokenRef.current = null
+        profileRequestRef.current = null
+
         setProfile(null)
         setAccess(null)
       }
